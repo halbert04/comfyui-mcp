@@ -7,6 +7,22 @@ from typing import Any
 
 from comfyui_mcp.client import ComfyUIClient
 
+# Extra search terms for nodes that are hard to discover by name alone.
+# Maps node class name → space-separated keywords agents might search for.
+_EXTRA_ALIASES: dict[str, str] = {
+    "ImageBatch": "concat join merge combine stitch frames video",
+    "BatchImagesNode": "concat join merge combine stitch frames video multiple",
+    "BatchMasksNode": "concat join merge combine masks multiple",
+    "BatchLatentsNode": "concat join merge combine latents multiple",
+    "CreateVideo": "assemble build compose frames to video",
+    "GetVideoComponents": "decompose split extract frames audio from video",
+    "Video Slice": "trim cut clip segment",
+    "AudioConcat": "join merge combine sequence stitch",
+    "AudioMerge": "overlay mix layer combine",
+    "RebatchImages": "split chunk resize batch",
+    "ImageFromBatch": "extract slice pick frame",
+}
+
 
 class NodeCache:
     """Caches /object_info to avoid hitting ComfyUI on every lookup.
@@ -79,7 +95,8 @@ class NodeCache:
                     f"{info.get('description', '')}"
                 ).lower()
                 aliases = " ".join(info.get("search_aliases") or []).lower()
-                if q not in searchable and q not in aliases:
+                extra = _EXTRA_ALIASES.get(name, "").lower()
+                if q not in searchable and q not in aliases and q not in extra:
                     continue
 
             # Category filter

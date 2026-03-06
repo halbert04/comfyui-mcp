@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
+import aiohttp
 from fastmcp import FastMCP
 
 from comfyui_mcp.client import ComfyUIClient
+from comfyui_mcp.config import get_config
+from comfyui_mcp.polling import wait_for_completion
 
 
 def register(mcp: FastMCP, get_client: Any) -> None:
@@ -116,6 +119,118 @@ def register(mcp: FastMCP, get_client: Any) -> None:
                 })
 
         return images
+
+    @mcp.tool()
+    async def wait_for_jobs(
+        prompt_ids: str,
+        timeout: float = 0,
+    ) -> dict:
+        """Wait for multiple queued jobs to complete and return all results.
+
+        Use this after queueing multiple jobs with queue_only=true to wait
+        for all of them at once, enabling parallel execution.
+
+        Args:
+            prompt_ids: Comma-separated list of prompt IDs to wait for.
+                Example: "abc123,def456,ghi789"
+            timeout: Max seconds to wait per job. Default: 0 (use server
+                default). Set higher for slow jobs like video generation.
+
+        Returns:
+            Dict mapping each prompt_id to its result (status, images,
+            videos, audios, outputs). Jobs are polled concurrently.
+        """
+        import asyncio
+
+        client: ComfyUIClient = get_client()
+        config = get_config()
+        effective_timeout = timeout if timeout > 0 else config.comfyui_timeout
+        ids = [pid.strip() for pid in prompt_ids.split(",") if pid.strip()]
+
+        if not ids:
+            return {"error": "No prompt IDs provided"}
+
+        # Poll all jobs concurrently
+        tasks = [
+            wait_for_completion(
+                client,
+                pid,
+                timeout=effective_timeout,
+                poll_interval=config.comfyui_poll_interval,
+            )
+            for pid in ids
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        output: dict[str, Any] = {}
+        for pid, result in zip(ids, results):
+            if isinstance(result, Exception):
+                output[pid] = {"prompt_id": pid, "status": "error", "error": str(result)}
+            else:
+                output[pid] = result
+
+        return output
+
+    @mcp.tool()
+    async def copy_output_to_input(
+        filename: str,
+        subfolder: str = "",
+        new_name: str = "",
+    ) -> dict:
+        """Copy a file from ComfyUI's output directory to input directory.
+
+        Makes generated files (images, videos, audio) available as inputs
+        for subsequent workflows. For example, copy a generated image to
+        use it in image_to_image, image_to_video, or run_api_node.
+
+        Args:
+            filename: The filename in the output directory (e.g.
+                "ComfyUI_MCP_00001_.png", "video/ComfyUI_MCP_api_00001_.mp4").
+            subfolder: Subfolder within output directory. Default: "" (root).
+                Use "video" for video files.
+            new_name: Rename the file in the input directory. Default: ""
+                (keep original name).
+
+        Returns:
+            Dict with the input filename that can be used with LoadImage,
+            LoadVideo, etc.
+        """
+        import io
+
+        client: ComfyUIClient = get_client()
+        session = await client._get_session()
+
+        # Download from /view
+        view_params: dict[str, str] = {
+            "filename": filename,
+            "type": "output",
+        }
+        if subfolder:
+            view_params["subfolder"] = subfolder
+        view_url = f"{client.base_url}/view"
+        async with session.get(view_url, params=view_params) as resp:
+            resp.raise_for_status()
+            file_bytes = await resp.read()
+
+        # Upload to input via /upload/image
+        target_name = new_name or filename.split("/")[-1]
+        upload_url = f"{client.base_url}/upload/image"
+        form = aiohttp.FormData()
+        form.add_field(
+            "image",
+            io.BytesIO(file_bytes),
+            filename=target_name,
+        )
+        form.add_field("overwrite", "true")
+        async with session.post(upload_url, data=form) as resp:
+            resp.raise_for_status()
+            result = await resp.json()
+
+        return {
+            "input_filename": result.get("name", target_name),
+            "subfolder": result.get("subfolder", ""),
+            "message": f"Copied to input directory as '{result.get('name', target_name)}'",
+        }
 
     @mcp.tool()
     async def list_files(

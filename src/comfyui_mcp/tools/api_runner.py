@@ -58,6 +58,8 @@ def register(mcp: FastMCP, get_client: Any, get_node_cache: Any) -> None:
         node_class: str,
         inputs: str = "{}",
         output_format: str = "auto",
+        timeout: float = 0,
+        queue_only: bool = False,
         ctx: Context | None = None,
     ) -> dict:
         """Run any ComfyUI node in a single call.
@@ -86,10 +88,19 @@ def register(mcp: FastMCP, get_client: Any, get_node_cache: Any) -> None:
                 "auto" — detect from node outputs (IMAGE→SaveImage, etc.).
                 "image", "video", "audio" — force a specific save type.
                 "none" — skip save node (for nodes that save internally).
+            timeout: Max seconds to wait for completion. Default: 0 (use
+                server default, typically 300s). Set higher for slow API
+                nodes like video generation (e.g. 600 for Veo 3).
+            queue_only: If true, queue the job and return immediately with
+                the prompt_id without waiting for completion. Default: false.
+                Use get_job_status(prompt_id) to check progress later, or
+                wait_for_jobs([prompt_id1, prompt_id2, ...]) to wait for
+                multiple jobs at once.
 
         Returns:
             Dict with prompt_id, status, images, videos, audios, outputs,
-            and workflow_id.
+            and workflow_id. If queue_only=true, returns only prompt_id
+            and status="queued".
         """
         node_cache: NodeCache = get_node_cache()
         schema = await node_cache.get_node(node_class)
@@ -259,10 +270,23 @@ def register(mcp: FastMCP, get_client: Any, get_node_cache: Any) -> None:
                 "node_errors": result["node_errors"],
             }
 
+        # Queue-only mode: return immediately
+        if queue_only:
+            response: dict[str, Any] = {
+                "prompt_id": prompt_id,
+                "status": "queued",
+            }
+            if ctx is not None:
+                wf_id = await _store_workflow(ctx, workflow, f"api_{node_class}")
+                response["workflow_id"] = wf_id
+            return response
+
+        # Wait for completion with optional timeout override
+        effective_timeout = timeout if timeout > 0 else config.comfyui_timeout
         completion = await wait_for_completion(
             client,
             prompt_id,
-            timeout=config.comfyui_timeout,
+            timeout=effective_timeout,
             poll_interval=config.comfyui_poll_interval,
         )
 

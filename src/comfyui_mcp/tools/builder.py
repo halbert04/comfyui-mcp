@@ -120,6 +120,7 @@ async def create_workflow_impl(
             "dalle3": workflows.dalle3,
             "gpt_image": workflows.gpt_image,
             "sora_video": workflows.sora_video,
+            "merge_videos": workflows.merge_videos,
         }
         builder_fn = template_builders.get(template)
         if not builder_fn:
@@ -162,6 +163,10 @@ async def create_workflow_impl(
             params["input_image"] = ""
         if template == "upscale" and "input_image" not in params:
             params["input_image"] = ""
+
+        # Merge videos template
+        if template == "merge_videos" and "video_files" not in params:
+            params["video_files"] = []
 
         # API node templates — no local model resolution needed
         if template in ("dalle3", "gpt_image", "sora_video"):

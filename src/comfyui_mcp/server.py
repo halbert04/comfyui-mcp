@@ -46,6 +46,24 @@ For complex workflows (ControlNet, multi-LoRA, regional prompting, IP-Adapter):
 6. validate_workflow(workflow_id) — check for errors
 7. execute_workflow(workflow_id) — generate results
 
+## Parallel Execution
+For independent jobs (e.g. generating multiple clips), queue them all at once
+and wait for all results:
+1. run_api_node(..., queue_only=true) × N — queue without waiting
+2. wait_for_jobs("id1,id2,id3") — wait for all concurrently
+
+## File Pipeline
+Generated files live in the output directory. To use them as inputs:
+- copy_output_to_input(filename="ComfyUI_00001_.png") → makes it available
+  for LoadImage, image_to_image, run_api_node, etc.
+
+## Key Nodes for Video Editing
+- ImageBatch — concatenate/join IMAGE frame batches (for merging video frames)
+- GetVideoComponents — decompose VIDEO → IMAGE frames + AUDIO + FPS
+- CreateVideo — reassemble IMAGE frames + AUDIO → VIDEO
+- Video Slice — trim a video by start_time and duration
+- AudioConcat — sequence audio tracks, AudioMerge — overlay/mix audio
+
 ## Key Concepts
 - Workflows are DAGs of nodes with typed inputs/outputs (MODEL, CLIP, VAE,
   IMAGE, CONDITIONING, LATENT, VIDEO, AUDIO, etc.)

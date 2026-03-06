@@ -33,6 +33,12 @@ Run any of ComfyUI's 200+ API nodes in a single call — Kling, Runway, Luma, St
 
 Automatically inserts loader nodes for image/video/audio inputs and save nodes for outputs. Validates COMBO values, INT/FLOAT ranges, and required inputs before submitting.
 
+Supports async execution for parallel jobs:
+```
+run_api_node(..., queue_only=true)  # returns immediately with prompt_id
+wait_for_jobs("id1,id2,id3")       # waits for all concurrently
+```
+
 ### Custom Workflows (multi-node graphs)
 
 For complex workflows (ControlNet, multi-LoRA, regional prompting, IP-Adapter):
@@ -58,7 +64,9 @@ For complex workflows (ControlNet, multi-LoRA, regional prompting, IP-Adapter):
 | `upload_image` | Upload an image to ComfyUI's input directory |
 | `upload_mask` | Upload a mask image for inpainting |
 | `get_image_url` | Get URL to view/download generated files |
-| `browse_files` | List files in ComfyUI directories |
+| `list_files` | List files in ComfyUI directories |
+| `copy_output_to_input` | Copy generated files to input for reuse |
+| `wait_for_jobs` | Wait for multiple queued jobs concurrently |
 
 ## Prerequisites
 
