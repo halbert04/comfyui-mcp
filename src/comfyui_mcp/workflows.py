@@ -737,3 +737,309 @@ def merge_videos(
     })
 
     return wb.build()
+
+
+# ── Flux workflows ──────────────────────────────────────────────────
+
+
+def flux_txt2img(
+    prompt: str,
+    diffusion_model: str = "",
+    clip_name1: str = "clip_l.safetensors",
+    clip_name2: str = "t5xxl_fp8_e4m3fn.safetensors",
+    vae_name: str = "ae.safetensors",
+    width: int = 1024,
+    height: int = 1024,
+    steps: int = 20,
+    guidance: float = 3.5,
+    seed: int = -1,
+    batch_size: int = 1,
+    use_gguf: bool = False,
+) -> dict:
+    """Build a Flux text-to-image workflow.
+
+    Supports both safetensors (UNETLoader) and GGUF (UnetLoaderGGUF) models.
+    Uses DualCLIPLoader, CLIPTextEncodeFlux, Flux2Scheduler, SamplerCustom.
+    """
+    wb = WorkflowBuilder()
+    seed = _resolve_seed(seed)
+
+    # 1: DualCLIPLoader → CLIP
+    clip_id = wb.add_node("DualCLIPLoader", {
+        "clip_name1": clip_name1,
+        "clip_name2": clip_name2,
+        "type": "flux",
+    })
+
+    # 2: CLIPTextEncodeFlux — positive prompt
+    pos_id = wb.add_node("CLIPTextEncodeFlux", {
+        "clip": wb.link(clip_id, 0),
+        "clip_l": prompt,
+        "t5xxl": prompt,
+        "guidance": guidance,
+    })
+
+    # 3: CLIPTextEncodeFlux — negative (empty, Flux ignores negatives)
+    neg_id = wb.add_node("CLIPTextEncodeFlux", {
+        "clip": wb.link(clip_id, 0),
+        "clip_l": "",
+        "t5xxl": "",
+        "guidance": guidance,
+    })
+
+    # 4: Load diffusion model
+    if use_gguf:
+        model_id = wb.add_node("UnetLoaderGGUF", {
+            "unet_name": diffusion_model,
+        })
+    else:
+        model_id = wb.add_node("UNETLoader", {
+            "unet_name": diffusion_model,
+            "weight_dtype": "default",
+        })
+
+    # 5: VAELoader
+    vae_id = wb.add_node("VAELoader", {"vae_name": vae_name})
+
+    # 6: EmptyFlux2LatentImage
+    latent_id = wb.add_node("EmptyFlux2LatentImage", {
+        "width": width,
+        "height": height,
+        "batch_size": batch_size,
+    })
+
+    # 7: Flux2Scheduler — resolution-aware sigma schedule
+    sched_id = wb.add_node("Flux2Scheduler", {
+        "steps": steps,
+        "width": width,
+        "height": height,
+    })
+
+    # 8: KSamplerSelect
+    sampler_sel_id = wb.add_node("KSamplerSelect", {
+        "sampler_name": "euler",
+    })
+
+    # 9: SamplerCustom — uses Flux2Scheduler sigmas
+    sample_id = wb.add_node("SamplerCustom", {
+        "add_noise": True,
+        "noise_seed": seed,
+        "cfg": 1.0,  # Flux uses guidance in conditioning, not CFG
+        "model": wb.link(model_id, 0),
+        "positive": wb.link(pos_id, 0),
+        "negative": wb.link(neg_id, 0),
+        "sampler": wb.link(sampler_sel_id, 0),
+        "sigmas": wb.link(sched_id, 0),
+        "latent_image": wb.link(latent_id, 0),
+    })
+
+    # 10: VAEDecode
+    decode_id = wb.add_node("VAEDecode", {
+        "samples": wb.link(sample_id, 0),
+        "vae": wb.link(vae_id, 0),
+    })
+
+    # 11: SaveImage
+    wb.add_node("SaveImage", {
+        "images": wb.link(decode_id, 0),
+        "filename_prefix": "ComfyUI_MCP_flux",
+    })
+
+    return wb.build()
+
+
+# ── Wan 2.2 workflows ───────────────────────────────────────────────
+
+
+def wan_txt2video(
+    prompt: str,
+    negative_prompt: str = "low quality, worst quality, deformed, distorted",
+    diffusion_model: str = "",
+    clip_name: str = "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    vae_name: str = "wan2.2_vae.safetensors",
+    width: int = 832,
+    height: int = 480,
+    length: int = 81,
+    steps: int = 25,
+    cfg: float = 6.0,
+    sampler: str = "euler",
+    scheduler: str = "normal",
+    seed: int = -1,
+    frame_rate: float = 16.0,
+) -> dict:
+    """Build a Wan 2.2 text-to-video workflow.
+
+    Pipeline: UnetLoaderGGUF → CLIPLoader(wan) → VAELoader →
+    CLIPTextEncode → WanImageToVideo → KSampler → VAEDecode →
+    SaveAnimatedWEBP.
+    """
+    wb = WorkflowBuilder()
+    seed = _resolve_seed(seed)
+
+    # 1: UnetLoaderGGUF — load Wan model
+    model_id = wb.add_node("UnetLoaderGGUF", {
+        "unet_name": diffusion_model,
+    })
+
+    # 2: CLIPLoader with type "wan"
+    clip_id = wb.add_node("CLIPLoader", {
+        "clip_name": clip_name,
+        "type": "wan",
+    })
+
+    # 3: VAELoader
+    vae_id = wb.add_node("VAELoader", {"vae_name": vae_name})
+
+    # 4: Positive prompt
+    pos_id = wb.add_node("CLIPTextEncode", {
+        "text": prompt,
+        "clip": wb.link(clip_id, 0),
+    })
+
+    # 5: Negative prompt
+    neg_id = wb.add_node("CLIPTextEncode", {
+        "text": negative_prompt,
+        "clip": wb.link(clip_id, 0),
+    })
+
+    # 6: WanImageToVideo (no start_image = text-only mode)
+    # Outputs: [CONDITIONING(0), CONDITIONING(1), LATENT(2)]
+    wan_id = wb.add_node("WanImageToVideo", {
+        "positive": wb.link(pos_id, 0),
+        "negative": wb.link(neg_id, 0),
+        "vae": wb.link(vae_id, 0),
+        "width": width,
+        "height": height,
+        "length": length,
+        "batch_size": 1,
+    })
+
+    # 7: KSampler
+    sampler_id = wb.add_node("KSampler", {
+        "seed": seed,
+        "steps": steps,
+        "cfg": cfg,
+        "sampler_name": sampler,
+        "scheduler": scheduler,
+        "denoise": 1.0,
+        "model": wb.link(model_id, 0),
+        "positive": wb.link(wan_id, 0),
+        "negative": wb.link(wan_id, 1),
+        "latent_image": wb.link(wan_id, 2),
+    })
+
+    # 8: VAEDecode
+    decode_id = wb.add_node("VAEDecode", {
+        "samples": wb.link(sampler_id, 0),
+        "vae": wb.link(vae_id, 0),
+    })
+
+    # 9: SaveAnimatedWEBP
+    wb.add_node("SaveAnimatedWEBP", {
+        "images": wb.link(decode_id, 0),
+        "filename_prefix": "ComfyUI_MCP_wan",
+        "fps": frame_rate,
+        "lossless": False,
+        "quality": 90,
+        "method": "default",
+    })
+
+    return wb.build()
+
+
+def wan_img2video(
+    prompt: str,
+    input_image: str,
+    negative_prompt: str = "low quality, worst quality, deformed, distorted",
+    diffusion_model: str = "",
+    clip_name: str = "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    vae_name: str = "wan2.2_vae.safetensors",
+    width: int = 832,
+    height: int = 480,
+    length: int = 81,
+    steps: int = 25,
+    cfg: float = 6.0,
+    sampler: str = "euler",
+    scheduler: str = "normal",
+    seed: int = -1,
+    frame_rate: float = 16.0,
+) -> dict:
+    """Build a Wan 2.2 image-to-video workflow.
+
+    Same as txt2video but passes a start_image to WanImageToVideo.
+    """
+    wb = WorkflowBuilder()
+    seed = _resolve_seed(seed)
+
+    # 1: UnetLoaderGGUF
+    model_id = wb.add_node("UnetLoaderGGUF", {
+        "unet_name": diffusion_model,
+    })
+
+    # 2: CLIPLoader
+    clip_id = wb.add_node("CLIPLoader", {
+        "clip_name": clip_name,
+        "type": "wan",
+    })
+
+    # 3: VAELoader
+    vae_id = wb.add_node("VAELoader", {"vae_name": vae_name})
+
+    # 4: Positive prompt
+    pos_id = wb.add_node("CLIPTextEncode", {
+        "text": prompt,
+        "clip": wb.link(clip_id, 0),
+    })
+
+    # 5: Negative prompt
+    neg_id = wb.add_node("CLIPTextEncode", {
+        "text": negative_prompt,
+        "clip": wb.link(clip_id, 0),
+    })
+
+    # 6: LoadImage
+    img_id = wb.add_node("LoadImage", {"image": input_image})
+
+    # 7: WanImageToVideo with start_image
+    wan_id = wb.add_node("WanImageToVideo", {
+        "positive": wb.link(pos_id, 0),
+        "negative": wb.link(neg_id, 0),
+        "vae": wb.link(vae_id, 0),
+        "width": width,
+        "height": height,
+        "length": length,
+        "batch_size": 1,
+        "start_image": wb.link(img_id, 0),
+    })
+
+    # 8: KSampler
+    sampler_id = wb.add_node("KSampler", {
+        "seed": seed,
+        "steps": steps,
+        "cfg": cfg,
+        "sampler_name": sampler,
+        "scheduler": scheduler,
+        "denoise": 1.0,
+        "model": wb.link(model_id, 0),
+        "positive": wb.link(wan_id, 0),
+        "negative": wb.link(wan_id, 1),
+        "latent_image": wb.link(wan_id, 2),
+    })
+
+    # 9: VAEDecode
+    decode_id = wb.add_node("VAEDecode", {
+        "samples": wb.link(sampler_id, 0),
+        "vae": wb.link(vae_id, 0),
+    })
+
+    # 10: SaveAnimatedWEBP
+    wb.add_node("SaveAnimatedWEBP", {
+        "images": wb.link(decode_id, 0),
+        "filename_prefix": "ComfyUI_MCP_wan_i2v",
+        "fps": frame_rate,
+        "lossless": False,
+        "quality": 90,
+        "method": "default",
+    })
+
+    return wb.build()

@@ -12,10 +12,13 @@ All parameters have sensible defaults. Only a prompt is required:
 
 | Tool | Description |
 |------|-------------|
-| `text_to_image` | Generate images from text (local SD/Flux model) |
+| `text_to_image` | Generate images from text (local SD/SDXL model) |
+| `flux_text_to_image` | Generate images using Flux (auto-detects GGUF/safetensors) |
 | `image_to_image` | Transform an existing image with a prompt |
 | `text_to_video` | Generate video from text (local LTX-Video model) |
-| `image_to_video` | Animate an image into video |
+| `image_to_video` | Animate an image into video (LTX-Video) |
+| `wan_text_to_video` | Generate video from text (local Wan 2.2 model) |
+| `wan_image_to_video` | Animate an image into video (Wan 2.2) |
 | `upscale_image` | AI upscale with an upscale model |
 | `inpaint` | Fill masked regions with AI-generated content |
 | `dalle3_image` | DALL-E 3 image generation (cloud API) |
@@ -78,11 +81,15 @@ Make sure ComfyUI is running and accessible (default: `http://127.0.0.1:8188`).
 
 ### Models (for local generation)
 
-For local generation tools (`text_to_image`, `text_to_video`, etc.), you need models installed in ComfyUI:
+For local generation tools, you need models installed in ComfyUI:
 
-- **Image generation**: Any Stable Diffusion or Flux checkpoint in `models/checkpoints/`
-- **Video generation**: [LTX-Video](https://huggingface.co/Lightricks/LTX-Video) checkpoint + a T5-XXL text encoder in `models/text_encoders/`
-- **Upscaling**: Any upscale model in `models/upscale_models/`
+- **SD/SDXL image** (`text_to_image`): Any SD/SDXL checkpoint in `models/checkpoints/`
+- **Flux image** (`flux_text_to_image`): A Flux diffusion model (safetensors in `models/diffusion_models/` or GGUF) + `clip_l.safetensors` and `t5xxl` encoder in `models/text_encoders/` + `ae.safetensors` VAE in `models/vae/`
+- **LTX-Video** (`text_to_video`, `image_to_video`): [LTX-Video](https://huggingface.co/Lightricks/LTX-Video) checkpoint + T5-XXL text encoder
+- **Wan 2.2 video** (`wan_text_to_video`, `wan_image_to_video`): Wan 2.2 GGUF model + `umt5_xxl` encoder in `models/text_encoders/` + `wan2.2_vae.safetensors` in `models/vae/`
+- **Upscaling** (`upscale_image`): Any upscale model in `models/upscale_models/`
+
+All local tools auto-detect installed models. Use `list_models()` to see what's available.
 
 Use `list_models()` through the MCP to see what's currently installed.
 

@@ -13,6 +13,7 @@ from comfyui_mcp.client import ComfyUIClient
 from comfyui_mcp.config import get_config
 from comfyui_mcp.node_cache import NodeCache
 from comfyui_mcp.polling import wait_for_completion
+from comfyui_mcp.workflow_export import to_ui_workflow
 
 
 class StateStore(Protocol):
@@ -121,6 +122,9 @@ async def create_workflow_impl(
             "gpt_image": workflows.gpt_image,
             "sora_video": workflows.sora_video,
             "merge_videos": workflows.merge_videos,
+            "flux_txt2img": workflows.flux_txt2img,
+            "wan_txt2video": workflows.wan_txt2video,
+            "wan_img2video": workflows.wan_img2video,
         }
         builder_fn = template_builders.get(template)
         if not builder_fn:
@@ -167,6 +171,45 @@ async def create_workflow_impl(
         # Merge videos template
         if template == "merge_videos" and "video_files" not in params:
             params["video_files"] = []
+
+        # Flux template
+        if template == "flux_txt2img":
+            if "prompt" not in params:
+                params["prompt"] = ""
+            if "diffusion_model" not in params:
+                # Try to auto-detect a Flux model
+                for folder in ("diffusion_models", "unet"):
+                    try:
+                        dm_models = await client.get_models(folder=folder)
+                    except Exception:
+                        continue
+                    for m in dm_models:
+                        ml = m.lower()
+                        if "flux" in ml or "turbo" in ml:
+                            params["diffusion_model"] = m
+                            params.setdefault("use_gguf", ml.endswith(".gguf"))
+                            break
+                    if "diffusion_model" in params:
+                        break
+
+        # Wan templates
+        if template in ("wan_txt2video", "wan_img2video"):
+            if "prompt" not in params:
+                params["prompt"] = ""
+            if template == "wan_img2video" and "input_image" not in params:
+                params["input_image"] = ""
+            if "diffusion_model" not in params:
+                for folder in ("diffusion_models", "unet"):
+                    try:
+                        dm_models = await client.get_models(folder=folder)
+                    except Exception:
+                        continue
+                    for m in dm_models:
+                        if "wan" in m.lower():
+                            params["diffusion_model"] = m
+                            break
+                    if "diffusion_model" in params:
+                        break
 
         # API node templates — no local model resolution needed
         if template in ("dalle3", "gpt_image", "sora_video"):
@@ -482,6 +525,7 @@ async def validate_workflow_impl(
 
 async def execute_workflow_impl(
     get_client: Any,
+    get_node_cache: Any,
     workflow_id: str,
     wait: bool = True,
     ctx: StateStore | None = None,
@@ -496,7 +540,19 @@ async def execute_workflow_impl(
 
     config = get_config()
     client: ComfyUIClient = get_client()
-    result = await client.queue_prompt(wf_state["nodes"], api_key=config.comfy_api_key)
+
+    # Convert to UI format for embedding in output PNGs
+    extra_pnginfo = None
+    try:
+        node_cache: NodeCache = get_node_cache()
+        ui_workflow = await to_ui_workflow(wf_state["nodes"], node_cache)
+        extra_pnginfo = {"workflow": ui_workflow}
+    except Exception:
+        pass  # Non-fatal — workflow still executes without UI metadata
+
+    result = await client.queue_prompt(
+        wf_state["nodes"], api_key=config.comfy_api_key, extra_pnginfo=extra_pnginfo
+    )
     prompt_id = result.get("prompt_id")
 
     if not prompt_id:
@@ -545,8 +601,9 @@ def register(mcp: FastMCP, get_client: Any, get_node_cache: Any) -> None:
         Args:
             name: Human-readable name for the workflow.
             template: Template to start from: "txt2img", "img2img", "upscale",
-                "inpaint", "txt2video_ltxv", "img2video_ltxv", "dalle3",
-                "gpt_image", or "sora_video". Empty creates an empty workflow.
+                "inpaint", "txt2video_ltxv", "img2video_ltxv", "flux_txt2img",
+                "wan_txt2video", "wan_img2video", "dalle3", "gpt_image",
+                "sora_video", or "merge_videos". Empty creates an empty workflow.
             overrides: JSON string of parameter overrides for the template
                 (e.g. '{"prompt": "a cat", "checkpoint": "sdxl.safetensors"}').
 
@@ -664,4 +721,4 @@ def register(mcp: FastMCP, get_client: Any, get_node_cache: Any) -> None:
         Returns:
             Dict with prompt_id, status, images, outputs, and workflow_id.
         """
-        return await execute_workflow_impl(get_client, workflow_id, wait, ctx)
+        return await execute_workflow_impl(get_client, get_node_cache, workflow_id, wait, ctx)

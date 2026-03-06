@@ -49,13 +49,28 @@ class ComfyUIClient:
         prompt: dict,
         client_id: str | None = None,
         api_key: str = "",
+        extra_pnginfo: dict[str, Any] | None = None,
     ) -> dict:
-        """POST /prompt — queue a workflow for execution."""
+        """POST /prompt — queue a workflow for execution.
+
+        Args:
+            prompt: The workflow execution dict.
+            client_id: Optional client ID for WebSocket routing.
+            api_key: Comfy.org API key for cloud nodes.
+            extra_pnginfo: Optional metadata to embed in output files.
+                If a "workflow" key is included, it gets embedded in output
+                PNGs, enabling drag-and-drop back into ComfyUI.
+        """
         body: dict[str, Any] = {"prompt": prompt}
         if client_id:
             body["client_id"] = client_id
+        extra_data: dict[str, Any] = {}
         if api_key:
-            body["extra_data"] = {"api_key_comfy_org": api_key}
+            extra_data["api_key_comfy_org"] = api_key
+        if extra_pnginfo:
+            extra_data["extra_pnginfo"] = extra_pnginfo
+        if extra_data:
+            body["extra_data"] = extra_data
         return await self._post("/prompt", json=body)
 
     async def get_history(

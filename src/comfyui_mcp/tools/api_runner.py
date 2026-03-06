@@ -12,6 +12,7 @@ from comfyui_mcp.client import ComfyUIClient
 from comfyui_mcp.config import get_config
 from comfyui_mcp.node_cache import NodeCache
 from comfyui_mcp.polling import wait_for_completion
+from comfyui_mcp.workflow_export import to_ui_workflow
 from comfyui_mcp.workflows import WorkflowBuilder
 
 
@@ -257,7 +258,18 @@ def register(mcp: FastMCP, get_client: Any, get_node_cache: Any) -> None:
         workflow = wb.build()
         config = get_config()
         client: ComfyUIClient = get_client()
-        result = await client.queue_prompt(workflow, api_key=config.comfy_api_key)
+
+        # Convert to UI format for embedding in output PNGs
+        extra_pnginfo = None
+        try:
+            ui_workflow = await to_ui_workflow(workflow, node_cache)
+            extra_pnginfo = {"workflow": ui_workflow}
+        except Exception:
+            pass  # Non-fatal — workflow still executes without UI metadata
+
+        result = await client.queue_prompt(
+            workflow, api_key=config.comfy_api_key, extra_pnginfo=extra_pnginfo
+        )
         prompt_id = result.get("prompt_id")
 
         if not prompt_id:

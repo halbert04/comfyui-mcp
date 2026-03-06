@@ -17,15 +17,28 @@ mcp = FastMCP(
 ## Quick Generation (one-call tools)
 All parameters have sensible defaults — only prompt is required. Change any
 parameter to customize (steps, cfg, size, model, seed, etc.):
-- text_to_image(prompt="...") — generate image (local SD/Flux model)
+
+Local image generation:
+- text_to_image(prompt="...") — SD/SDXL image generation
+- flux_text_to_image(prompt="...") — Flux image generation (auto-detects
+  GGUF or safetensors model, CLIP encoders). High quality 1024x1024 default.
 - image_to_image(prompt="...", input_image="...") — transform image
-- text_to_video(prompt="...") — generate video (local LTX-V model)
-- image_to_video(prompt="...", input_image="...") — animate image
 - upscale_image(input_image="...") — AI upscale
 - inpaint(prompt="...", input_image="...", mask_image="...") — inpaint
-- dalle3_image(prompt="...") — DALL-E 3 (cloud API)
-- gpt_image_generate(prompt="...") — GPT Image (cloud API)
-- sora_video_generate(prompt="...") — Sora 2 video (cloud API)
+
+Local video generation:
+- text_to_video(prompt="...") — LTX-Video text-to-video
+- image_to_video(prompt="...", input_image="...") — LTX-Video image-to-video
+- wan_text_to_video(prompt="...") — Wan 2.2 text-to-video (auto-detects
+  GGUF model and UMT5-XXL encoder). 832x480, 81 frames default.
+- wan_image_to_video(prompt="...", input_image="...") — Wan 2.2 image-to-video
+
+Cloud API generation (requires COMFY_API_KEY):
+- dalle3_image(prompt="...") — DALL-E 3
+- gpt_image_generate(prompt="...") — GPT Image
+- sora_video_generate(prompt="...") — Sora 2 video
+
+Video utilities:
 - merge_videos(video_files=["a.mp4", "b.mp4"]) — merge videos into one
 
 ## Any API Node (200+ cloud providers)
@@ -97,7 +110,7 @@ def get_node_cache() -> NodeCache:
 # Register all tools and resources
 system.register(mcp, get_client)
 models.register(mcp, get_client)
-generate.register(mcp, get_client)
+generate.register(mcp, get_client, get_node_cache)
 builder.register(mcp, get_client, get_node_cache)
 discovery.register(mcp, get_node_cache)
 api_runner.register(mcp, get_client, get_node_cache)
